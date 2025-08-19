@@ -1,6 +1,7 @@
 import express from "express";
 import admin from "firebase-admin";
 import * as geofire from "geofire-common";
+import serverless from "serverless-http";
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -48,4 +49,5 @@ app.post("/api/nearby", async (req, res) => {
   }
 });
 
-export default app;
+// 🔑 exporta como handler para que Vercel lo entienda
+export default serverless(app);
