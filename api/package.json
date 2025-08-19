@@ -1,0 +1,15 @@
+{
+  "name": "fastfood-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "firebase-admin": "^12.0.0",
+    "geofire-common": "^6.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/nearby.js",
+      "use": "@vercel/node"
+    }
+  ]
+}
