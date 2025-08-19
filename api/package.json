@@ -1,15 +1,18 @@
+
 {
-  "name": "pal-plato-backend",
+  "name": "nearby-businesses-api",
   "version": "1.0.0",
-  "type": "module",
-  "main": "index.js",
-  "license": "MIT",
+  "description": "API para buscar negocios cercanos usando geohash",
+  "main": "api/nearby.js",
   "scripts": {
-    "start": "node index.js"
+    "dev": "vercel dev",
+    "deploy": "vercel"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "firebase-admin": "^12.0.0",
     "geofire-common": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

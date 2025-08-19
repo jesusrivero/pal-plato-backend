@@ -1,9 +1,15 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/nearby.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/nearby.js": {
+      "runtime": "nodejs18.x"
     }
-  ]
+  },
+  "env": {
+    "FIREBASE_PROJECT_ID": "@firebase-project-id",
+    "FIREBASE_PRIVATE_KEY_ID": "@firebase-private-key-id", 
+    "FIREBASE_PRIVATE_KEY": "@firebase-private-key",
+    "FIREBASE_CLIENT_EMAIL": "@firebase-client-email",
+    "FIREBASE_CLIENT_ID": "@firebase-client-id"
+  }
 }

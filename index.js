@@ -1,17 +1,17 @@
-import express from "express";
+// import express from "express";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// const app = express();
+// const PORT = process.env.PORT || 3000;
 
-// Middleware para parsear JSON
-app.use(express.json());
+// // Middleware para parsear JSON
+// app.use(express.json());
 
-// Ruta simple de prueba
-app.get("/", (req, res) => {
-  res.send("Servidor backend funcionando 🚀");
-});
+// // Ruta simple de prueba
+// app.get("/", (req, res) => {
+//   res.send("Servidor backend funcionando 🚀");
+// });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
-});
+// // Iniciar servidor
+// app.listen(PORT, () => {
+//   console.log(`Servidor corriendo en el puerto ${PORT}`);
+// });
