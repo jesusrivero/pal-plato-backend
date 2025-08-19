@@ -1,18 +1,12 @@
-
 {
-  "name": "nearby-businesses-api",
+  "name": "palplato-backend",
   "version": "1.0.0",
-  "description": "API para buscar negocios cercanos usando geohash",
-  "main": "api/nearby.js",
-  "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel"
-  },
+  "private": true,
   "dependencies": {
-    "firebase-admin": "^12.0.0",
-    "geofire-common": "^6.0.0"
-  },
-  "engines": {
-    "node": ">=18"
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.5.0",
+    "geofire-common": "^5.2.0",
+    "serverless-http": "^3.2.0"
   }
 }

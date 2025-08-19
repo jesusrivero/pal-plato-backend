@@ -1,133 +1,140 @@
-// api/nearby.js - Endpoint para Vercel
+// Serverless Express en Vercel
+const express = require('express');
+const serverless = require('serverless-http');
+const cors = require('cors');
 const admin = require('firebase-admin');
 const { geohashQueryBounds, distanceBetween } = require('geofire-common');
 
-// Inicializar Firebase Admin SDK
+// --- Inicializar Firebase Admin sólo una vez ---
 if (!admin.apps.length) {
+  // Recomendado: guardar el JSON del service account en una env var FIREBASE_SERVICE_ACCOUNT
+  // con el contenido del JSON (string). Ej: Vercel -> Settings -> Environment Variables
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!serviceAccountJson) {
+    console.error('FIREBASE_SERVICE_ACCOUNT no está definido');
+  }
   admin.initializeApp({
-    credential: admin.credential.cert({
-      type: "service_account",
-      project_id: process.env.FIREBASE_PROJECT_ID,
-      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      client_email: process.env.FIREBASE_CLIENT_EMAIL,
-      client_id: process.env.FIREBASE_CLIENT_ID,
-      auth_uri: "https://accounts.google.com/o/oauth2/auth",
-      token_uri: "https://oauth2.googleapis.com/token",
-      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-      client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${encodeURIComponent(process.env.FIREBASE_CLIENT_EMAIL)}`
-    }),
-    databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`
+    credential: serviceAccountJson
+      ? admin.credential.cert(JSON.parse(serviceAccountJson))
+      : admin.credential.applicationDefault()
   });
 }
-
 const db = admin.firestore();
 
-export default async function handler(req, res) {
-  // Configurar CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+const app = express();
+app.use(express.json());
+app.use(cors({
+  origin: '*', // ajusta a tu dominio/app si quieres restringir
+  methods: ['POST', 'OPTIONS']
+}));
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+// Health check
+app.get('/health', (req, res) => res.status(200).json({ ok: true }));
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Método no permitido' });
-  }
-
+/**
+ * POST /nearby
+ * body: { lat: number, lng: number, radiusKm?: number, hasDelivery?: boolean, isOpen?: boolean, category?: string }
+ */
+app.post('/nearby', async (req, res) => {
   try {
-    const { lat, lng, radius = 5000 } = req.body; // radius en metros (default 5km)
-
-    // Validar parámetros
-    if (!lat || !lng) {
-      return res.status(400).json({ 
-        error: 'Parámetros lat y lng son requeridos' 
-      });
+    const { lat, lng, radiusKm = 10, hasDelivery, isOpen, category } = req.body || {};
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'lat y lng son obligatorios (number).' });
+    }
+    if (typeof radiusKm !== 'number' || radiusKm <= 0 || radiusKm > 50) {
+      return res.status(400).json({ error: 'radiusKm inválido (0 < radiusKm <= 50).' });
     }
 
-    const latitude = parseFloat(lat);
-    const longitude = parseFloat(lng);
-    const radiusInM = parseInt(radius);
+    // Query base
+    let baseQuery = db.collection('businesses').where('state', '==', true);
 
-    // Validar rangos
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-      return res.status(400).json({ 
-        error: 'Coordenadas inválidas' 
-      });
+    if (typeof hasDelivery === 'boolean') {
+      baseQuery = baseQuery.where('hasDelivery', '==', hasDelivery);
+    }
+    if (typeof isOpen === 'boolean') {
+      baseQuery = baseQuery.where('isOpen', '==', isOpen);
     }
 
-    // Generar bounding box con geohash
-    const center = [latitude, longitude];
-    const radiusInKm = radiusInM / 1000;
-    const bounds = geohashQueryBounds(center, radiusInKm);
+    // Bounds por geohash
+    const center = [lat, lng];
+    const bounds = geohashQueryBounds(center, radiusKm * 1000); // metros
+    const promises = [];
 
-    console.log(`Buscando negocios cerca de [${latitude}, ${longitude}] en radio de ${radiusInKm}km`);
-
-    // Realizar queries en paralelo para cada bound
-    const promises = bounds.map(bound => {
-      return db.collection('businesses')
+    for (const b of bounds) {
+      // Firestore: orderBy('geohash') + startAt/endAt
+      const q = baseQuery
         .orderBy('geohash')
-        .startAt(bound[0])
-        .endAt(bound[1])
-        .get();
-    });
+        .startAt(b[0])
+        .endAt(b[1]);
+
+      promises.push(q.get());
+    }
 
     const snapshots = await Promise.all(promises);
-    
-    // Combinar resultados y filtrar por distancia exacta
-    const nearbyBusinesses = [];
-    const seenIds = new Set();
 
-    for (const snapshot of snapshots) {
-      for (const doc of snapshot.docs) {
+    // Deduplicación por id
+    const map = new Map();
+
+    for (const snap of snapshots) {
+      snap.forEach(doc => {
         const data = doc.data();
-        const businessId = doc.id;
+        const bizLat = data.latitude;
+        const bizLng = data.longitude;
 
-        // Evitar duplicados
-        if (seenIds.has(businessId)) continue;
-        seenIds.add(businessId);
-
-        // Verificar que tenga coordenadas
-        if (!data.lat || !data.lng) continue;
-
-        const businessLocation = [data.lat, data.lng];
-        const distanceInKm = distanceBetween(center, businessLocation);
-        const distanceInM = distanceInKm * 1000;
-
-        // Filtrar por distancia exacta
-        if (distanceInM <= radiusInM) {
-          nearbyBusinesses.push({
-            id: businessId,
-            ...data,
-            distance: Math.round(distanceInM), // distancia en metros
-            distanceFormatted: distanceInM < 1000 
-              ? `${Math.round(distanceInM)}m`
-              : `${(distanceInKm).toFixed(1)}km`
-          });
+        if (typeof bizLat !== 'number' || typeof bizLng !== 'number' || !data.geohash) {
+          return; // saltar documentos inválidos
         }
-      }
+
+        // Filtro de distancia precisa
+        const distMeters = distanceBetween(center, [bizLat, bizLng]); // geofire-common -> metros
+        if (distMeters > radiusKm * 1000) return;
+
+        // Filtro por categoría (si viene)
+        if (category) {
+          const cats = Array.isArray(data.categories) ? data.categories : [];
+          const hasCat = cats.some(c =>
+            (c && typeof c.name === 'string') &&
+            c.name.toLowerCase() === category.toLowerCase()
+          );
+          if (!hasCat) return;
+        }
+
+        // Construir DTO (ajusta campos a tus necesidades)
+        const dto = {
+          id: doc.id,
+          name: data.name || '',
+          description: data.description || '',
+          direction: data.direction || '',
+          phone: data.phone || '',
+          isOpen: !!data.isOpen,
+          hasDelivery: !!data.hasDelivery,
+          deliveryPrice: typeof data.deliveryPrice === 'number'
+            ? data.deliveryPrice
+            : (parseFloat(data.deliveryPrice) || 0),
+          logoUrl: data.logoUrl || null,
+          latitude: bizLat,
+          longitude: bizLng,
+          geohash: data.geohash,
+          bank: data.bank || '',
+          phonePayment: data.phonePayment || '',
+          idCardPayment: data.idCardPayment || '',
+          categories: Array.isArray(data.categories) ? data.categories : [],
+          distanceMeters: Math.round(distMeters)
+        };
+
+        map.set(doc.id, dto);
+      });
     }
 
-    // Ordenar por distancia
-    nearbyBusinesses.sort((a, b) => a.distance - b.distance);
+    const businesses = Array.from(map.values())
+      .sort((a, b) => a.distanceMeters - b.distanceMeters);
 
-    console.log(`Encontrados ${nearbyBusinesses.length} negocios cerca`);
-
-    return res.status(200).json({
-      success: true,
-      center: { lat: latitude, lng: longitude },
-      radius: radiusInM,
-      count: nearbyBusinesses.length,
-      businesses: nearbyBusinesses
-    });
-
-  } catch (error) {
-    console.error('Error en nearby endpoint:', error);
-    return res.status(500).json({ 
-      error: 'Error interno del servidor',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    return res.status(200).json({ businesses });
+  } catch (err) {
+    console.error('Error en /nearby', err);
+    return res.status(500).json({ error: 'Error interno' });
   }
-}
+});
+
+// Export para Vercel (ruta real: /api/nearby)
+module.exports = serverless(app);
