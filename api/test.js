@@ -1,4 +1,4 @@
-import { db } from '../../firebaseAdmin';
+import { db } from '../../firebaseAdmin.js';
 
 export default async function handler(req, res) {
   try {
