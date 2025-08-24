@@ -92,13 +92,35 @@ export default async function handler(req, res) {
             }
 
             businesses.push({
-              id: doc.id,
-              name: data.name || "",
-              latitude: data.latitude,
-              longitude: data.longitude,
-              categories: data.categories || [],
-              distanceMeters: Math.round(dist),
-            });
+  id: doc.id,
+  businessId: doc.id, // 👈 lo mismo que id (por compatibilidad con tu data class)
+  ownerId: data.ownerId || "",
+  name: data.name || "",
+  description: data.description || "",
+  direction: data.direction || "",
+  phone: data.phone || "",
+  state: data.state ?? true,
+  date: data.date || null,
+  logoUrl: data.logoUrl || null,
+  isOpen: !!data.isOpen,
+  hasDelivery: !!data.hasDelivery,
+  deliveryPrice: parseFloat(data.deliveryPrice) || 0,
+  latitude: data.latitude,
+  longitude: data.longitude,
+  geohash: data.geohash || null,
+  categories: Array.isArray(data.categories) ? data.categories : [],
+  schedule: Array.isArray(data.schedule) ? data.schedule : [],
+  addressNotes: data.addressNotes || null,
+
+  // 💳 Datos de pago móvil
+  bank: data.bank || "",
+  phonePayment: data.phonePayment || "",
+  idCardPayment: data.idCardPayment || "",
+
+  // ⚡ Distancia
+  distanceMeters: Math.round(dist),
+});
+
           }
         });
       });
