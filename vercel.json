@@ -3,6 +3,9 @@
     "api/nearby.js": {
       "memory": 512,
       "maxDuration": 10
-    }
+    },
+      "api/orders.js": { 
+        "memory": 512, 
+        "maxDuration": 10 }
   }
 }
