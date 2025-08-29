@@ -2,15 +2,25 @@
 import admin from "firebase-admin";
 
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+    });
+    console.log("✅ Firebase Admin inicializado correctamente");
+  } catch (e) {
+    console.error("❌ Error inicializando Firebase Admin:", e);
+  }
 }
 
 const db = admin.firestore();
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
+  if (req.method !== "POST") {
+    console.warn("⚠️ Método no permitido:", req.method);
+    return res.status(405).json({ error: "Método no permitido" });
+  }
+
+  console.log("📦 Body recibido:", req.body);
 
   try {
     const { businessId, customerId, customerName, customerPhone, items, deliveryFee, location, instructions, deliveryType } = req.body;
@@ -21,28 +31,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Debe incluir al menos un producto" });
     }
 
-    // Validaciones y creación de pedido (igual que antes)
+    // Validar negocio
     const businessRef = db.collection("businesses").doc(businessId);
     const businessSnap = await businessRef.get();
+    console.log("📍 Negocio obtenido:", businessSnap.exists);
+
     if (!businessSnap.exists) return res.status(404).json({ error: "Negocio no encontrado" });
 
+    // Validar productos
     let subtotal = 0;
     const validatedItems = [];
+
     for (const item of items) {
+      console.log("🔹 Procesando item:", item);
       if (!item.productId || item.quantity <= 0) {
         return res.status(400).json({ error: "Producto inválido en items" });
       }
+
       const productRef = businessRef.collection("products").doc(item.productId);
       const productSnap = await productRef.get();
+      console.log(`📦 Producto ${item.productId} existe:`, productSnap.exists);
+
       if (!productSnap.exists)
         return res.status(404).json({ error: `Producto ${item.productId} no encontrado` });
 
       const productData = productSnap.data();
+      if (!productData || typeof productData.price !== "number") {
+        console.error("❌ Datos del producto inválidos:", productData);
+        return res.status(500).json({ error: `Datos inválidos para el producto ${item.productId}` });
+      }
+
       subtotal += productData.price * item.quantity;
 
       validatedItems.push({
         productId: item.productId,
-        name: productData.name,
+        name: productData.name || "Sin nombre",
         quantity: item.quantity,
         price: productData.price,
         specialNotes: item.specialNotes || "",
@@ -71,11 +94,12 @@ export default async function handler(req, res) {
       createdAt: Date.now(),
     };
 
+    console.log("✅ Pedido a crear:", newOrder);
     await newOrderRef.set(newOrder);
 
     res.status(201).json({ message: "Pedido creado exitosamente", order: newOrder });
   } catch (error) {
     console.error("❌ Error al crear pedido:", error);
-    res.status(500).json({ error: "Error interno al crear pedido" });
+    res.status(500).json({ error: "Error interno al crear pedido", details: error.message });
   }
 }
