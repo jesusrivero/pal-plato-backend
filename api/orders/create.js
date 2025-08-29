@@ -102,7 +102,11 @@ export default async function handler(req, res) {
     console.log("✅ Pedido a crear:", newOrder);
     await newOrderRef.set(newOrder);
 
-    res.status(201).json({ message: "Pedido creado exitosamente", order: newOrder });
+   res.status(201).json({
+  success: true,
+  message: "Pedido creado exitosamente",
+  order: newOrder
+});
   } catch (error) {
     console.error("❌ Error al crear pedido:", error);
     res.status(500).json({ error: "Error interno al crear pedido", details: error.message });
