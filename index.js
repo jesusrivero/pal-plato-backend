@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import admin from "firebase-admin";
-import orders from "./api/orders.js"; // ahora es app serverless
 
 dotenv.config();
 
