@@ -1,81 +1,140 @@
-// /api/orders/create.js
-import admin from "firebase-admin";
+// /api/nearby.js
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
 
+import admin from "firebase-admin";
+import { geohashQueryBounds, distanceBetween } from "geofire-common";
+
+// --- Inicializar Firebase Admin ---
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
+  try {
+    console.log("Inicializando Firebase Admin...");
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      }),
+    });
+    console.log("Firebase Admin inicializado correctamente");
+  } catch (e) {
+    console.error("❌ Error al inicializar Firebase Admin:", e);
+  }
 }
 
 const db = admin.firestore();
 
+// --- Función auxiliar para distancia precisa (Haversine) ---
+function calculatePreciseDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // metros
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ/2) ** 2 +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c;
+}
+
+// --- Handler principal para Vercel ---
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
+  if (req.method === "POST") {
+    try {
+      const { lat, lng, radiusKm = 10, hasDelivery, isOpen, category } = req.body;
 
-  try {
-    const { businessId, customerId, customerName, customerPhone, items, deliveryFee, location, instructions, deliveryType } = req.body;
-
-    if (!businessId) return res.status(400).json({ error: "businessId requerido" });
-    if (!customerId) return res.status(400).json({ error: "customerId requerido" });
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Debe incluir al menos un producto" });
-    }
-
-    // Validaciones y creación de pedido (igual que antes)
-    const businessRef = db.collection("businesses").doc(businessId);
-    const businessSnap = await businessRef.get();
-    if (!businessSnap.exists) return res.status(404).json({ error: "Negocio no encontrado" });
-
-    let subtotal = 0;
-    const validatedItems = [];
-    for (const item of items) {
-      if (!item.productId || item.quantity <= 0) {
-        return res.status(400).json({ error: "Producto inválido en items" });
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        return res.status(400).json({ error: "lat y lng inválidos" });
       }
-      const productRef = businessRef.collection("products").doc(item.productId);
-      const productSnap = await productRef.get();
-      if (!productSnap.exists)
-        return res.status(404).json({ error: `Producto ${item.productId} no encontrado` });
 
-      const productData = productSnap.data();
-      subtotal += productData.price * item.quantity;
+      if (radiusKm <= 0 || radiusKm > 100) {
+        return res.status(400).json({ error: "radiusKm debe estar entre 0 y 100" });
+      }
 
-      validatedItems.push({
-        productId: item.productId,
-        name: productData.name,
-        quantity: item.quantity,
-        price: productData.price,
-        specialNotes: item.specialNotes || "",
+      const center = [lat, lng];
+      const bounds = geohashQueryBounds(center, radiusKm * 1000);
+
+      let baseQuery = db.collection("businesses").where("state", "==", true);
+      if (typeof hasDelivery === "boolean") {
+        baseQuery = baseQuery.where("hasDelivery", "==", hasDelivery);
+      }
+      if (typeof isOpen === "boolean") {
+        baseQuery = baseQuery.where("isOpen", "==", isOpen);
+      }
+
+      const snaps = await Promise.all(
+        bounds.map((b) =>
+          baseQuery.orderBy("geohash").startAt(b[0]).endAt(b[1]).get()
+        )
+      );
+
+      const businesses = [];
+      const seen = new Set();
+
+      snaps.forEach((snap) => {
+        snap.forEach((doc) => {
+          if (seen.has(doc.id)) return;
+          seen.add(doc.id);
+
+          const data = doc.data();
+          const dist = calculatePreciseDistance(lat, lng, data.latitude, data.longitude);
+
+          if (dist <= radiusKm * 1000) {
+            if (category) {
+              const cats = Array.isArray(data.categories) ? data.categories : [];
+              const match = cats.some(
+                (c) => c?.name?.toLowerCase().trim() === category.toLowerCase().trim()
+              );
+              if (!match) return;
+            }
+
+            businesses.push({
+  id: doc.id,
+  businessId: doc.id, // 👈 lo mismo que id (por compatibilidad con tu data class)
+  ownerId: data.ownerId || "",
+  name: data.name || "",
+  description: data.description || "",
+  direction: data.direction || "",
+  phone: data.phone || "",
+  state: data.state ?? true,
+  date: data.date || null,
+  logoUrl: data.logoUrl || null,
+  isOpen: !!data.isOpen,
+  hasDelivery: !!data.hasDelivery,
+  deliveryPrice: parseFloat(data.deliveryPrice) || 0,
+  latitude: data.latitude,
+  longitude: data.longitude,
+  geohash: data.geohash || null,
+  categories: Array.isArray(data.categories) ? data.categories : [],
+  schedule: Array.isArray(data.schedule) ? data.schedule : [],
+  addressNotes: data.addressNotes || null,
+
+  // 💳 Datos de pago móvil
+  bank: data.bank || "",
+  phonePayment: data.phonePayment || "",
+  idCardPayment: data.idCardPayment || "",
+
+  // ⚡ Distancia
+  distanceMeters: Math.round(dist),
+});
+
+          }
+        });
       });
+
+      businesses.sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+      res.status(200).json({ businesses });
+    } catch (e) {
+      console.error("🔥 Error en /api/nearby:", e);
+      res.status(500).json({ error: "Error interno", message: e.message });
     }
-
-    const total = subtotal + (deliveryFee || 0);
-
-    const newOrderRef = db.collection("orders").doc();
-    const newOrder = {
-      orderId: newOrderRef.id,
-      businessId,
-      customerId,
-      customerName,
-      customerPhone,
-      items: validatedItems,
-      total,
-      deliveryFee: deliveryFee || 0,
-      location: deliveryType === "delivery" ? location : null,
-      instructions: instructions || "",
-      comprobanteUrl: "",
-      reference: "",
-      status: "pending",
-      deliveryType,
-      seenByOwner: false,
-      createdAt: Date.now(),
-    };
-
-    await newOrderRef.set(newOrder);
-
-    res.status(201).json({ message: "Pedido creado exitosamente", order: newOrder });
-  } catch (error) {
-    console.error("❌ Error al crear pedido:", error);
-    res.status(500).json({ error: "Error interno al crear pedido" });
+  } else if (req.method === "GET") {
+    res.status(200).json({ ok: true, message: "API Nearby funcionando 🚀" });
+  } else {
+    res.status(405).json({ error: "Método no permitido" });
   }
 }
