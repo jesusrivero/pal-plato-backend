@@ -1,10 +1,16 @@
-// /api/orders/create.js
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" }); // si lo necesitas localmente
+
 import admin from "firebase-admin";
 
 if (!admin.apps.length) {
   try {
     admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      }),
     });
     console.log("✅ Firebase Admin inicializado correctamente");
   } catch (e) {
@@ -35,7 +41,6 @@ export default async function handler(req, res) {
     const businessRef = db.collection("businesses").doc(businessId);
     const businessSnap = await businessRef.get();
     console.log("📍 Negocio obtenido:", businessSnap.exists);
-
     if (!businessSnap.exists) return res.status(404).json({ error: "Negocio no encontrado" });
 
     // Validar productos
