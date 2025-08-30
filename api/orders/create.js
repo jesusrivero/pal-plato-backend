@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" }); // si lo necesitas localmente
+dotenv.config({ path: ".env.local" });
 
 import admin from "firebase-admin";
 
@@ -35,6 +35,19 @@ export default async function handler(req, res) {
     if (!customerId) return res.status(400).json({ error: "customerId requerido" });
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Debe incluir al menos un producto" });
+    }
+
+    // --- VALIDACIÓN: Evitar pedidos pendientes ---
+    const pendingOrdersQuery = await db.collection("orders")
+      .where("customerId", "==", customerId)
+      .where("status", "==", "pending")
+      .get();
+
+    if (!pendingOrdersQuery.empty) {
+      return res.status(400).json({
+        success: false,
+        message: "Ya tienes un pedido pendiente. No puedes crear otro hasta que se complete."
+      });
     }
 
     // Validar negocio
@@ -102,11 +115,11 @@ export default async function handler(req, res) {
     console.log("✅ Pedido a crear:", newOrder);
     await newOrderRef.set(newOrder);
 
-   res.status(201).json({
-  success: true,
-  message: "Pedido creado exitosamente",
-  order: newOrder
-});
+    res.status(201).json({
+      success: true,
+      message: "Pedido creado exitosamente",
+      order: newOrder
+    });
   } catch (error) {
     console.error("❌ Error al crear pedido:", error);
     res.status(500).json({ error: "Error interno al crear pedido", details: error.message });
