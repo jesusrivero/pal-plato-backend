@@ -64,6 +64,7 @@ export default async function handler(req, res) {
         type,
       } = fields;
 
+      // Validaciones básicas
       if (!businessId) return res.status(400).json({ error: "businessId requerido" });
       if (!name) return res.status(400).json({ error: "name requerido" });
 
@@ -74,7 +75,7 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: "Negocio no encontrado" });
       }
 
-      // Subir imagen a Cloudinary
+      // Subir imagen a Cloudinary si existe
       let imageUrl = "";
       if (files.image) {
         try {
@@ -93,6 +94,7 @@ export default async function handler(req, res) {
       const productRef = businessRef.collection("products").doc();
       const productId = productRef.id;
 
+      // Construir objeto producto
       const newProduct = {
         id: productId,
         businessId,
@@ -103,13 +105,14 @@ export default async function handler(req, res) {
         preparationTime: Number(preparationTime) || 0,
         specialNotes: specialNotes || "",
         date: Date.now(),
-        ingredients: ingredients || [],
-        available: available ?? true,
+        ingredients: Array.isArray(ingredients) ? ingredients : [],
+        available: available !== undefined ? available === "true" || available === true : true,
         size: size || null,
         type: type || null,
         imageUrl,
       };
 
+      // Guardar en Firestore
       await productRef.set(newProduct);
 
       return res.status(201).json({
