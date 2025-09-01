@@ -1,3 +1,4 @@
+// /api/products/create.js  (Pages Router)
 import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
@@ -7,11 +8,13 @@ import { v2 as cloudinary } from "cloudinary";
 
 export const config = {
   api: {
-    bodyParser: false, // 👈 necesario para que formidable maneje form-data
+    bodyParser: false, // obligatorio para formidable
   },
 };
 
-// --- Inicializar Firebase Admin ---
+// Marca de versión para confirmar despliegue
+console.log("🚦 /api/products/create v3");
+
 if (!admin.apps.length) {
   try {
     admin.initializeApp({
@@ -26,103 +29,130 @@ if (!admin.apps.length) {
     console.error("❌ Error inicializando Firebase Admin:", e);
   }
 }
-
 const db = admin.firestore();
 
-// --- Configuración de Cloudinary ---
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// helper promisificado
+function parseForm(req) {
+  const form = formidable({ multiples: false });
+  return new Promise((resolve, reject) => {
+    form.parse(req, (err, fields, files) => {
+      if (err) return reject(err);
+      resolve({ fields, files });
+    });
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
   }
 
-  const form = formidable({ multiples: false });
-
-  form.parse(req, async (err, fields, files) => {
-  if (err) return res.status(500).json({ error: "Error parseando form-data" });
-
   try {
-    // ✅ usar fields en lugar de req.body
-    const {
+    // Útil para diagnosticar si llega como multipart
+    console.log("🔎 content-type:", req.headers["content-type"]);
+
+    const { fields, files } = await parseForm(req);
+
+    // NUNCA uses req.body aquí
+    console.log("📩 Fields keys:", Object.keys(fields || {}));
+    console.log("📎 Files keys:", Object.keys(files || {}));
+
+    const getVal = (v) => (Array.isArray(v) ? v[0] : v);
+
+    const businessId = getVal(fields.businessId);
+    const name = getVal(fields.name);
+    const price = Number(getVal(fields.price));
+    const description = getVal(fields.description) || "";
+    const category = getVal(fields.category) || "";
+    const preparationTime = Number(getVal(fields.preparationTime) || 0);
+    const specialNotes = getVal(fields.specialNotes) || "";
+    const availableRaw = getVal(fields.available);
+    const size = getVal(fields.size) || null;
+    const type = getVal(fields.type) || null;
+
+    // ingredients puede venir como JSON string o "a,b,c"
+    let ingredients = getVal(fields.ingredients);
+    if (typeof ingredients === "string") {
+      try {
+        ingredients = JSON.parse(ingredients);
+      } catch {
+        ingredients = ingredients
+          ? ingredients.split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
+      }
+    }
+    const available =
+      availableRaw !== undefined
+        ? availableRaw === "true" || availableRaw === true
+        : true;
+
+    if (!businessId) {
+      console.log("⛔ businessId ausente. fields:", fields);
+      return res.status(400).json({ error: "businessId requerido" });
+    }
+    if (!name) return res.status(400).json({ error: "name requerido" });
+
+    // Verificar negocio
+    const businessRef = db.collection("businesses").doc(businessId);
+    const businessSnap = await businessRef.get();
+    if (!businessSnap.exists) {
+      return res.status(404).json({ error: "Negocio no encontrado" });
+    }
+
+    // Subir imagen si llegó
+    let imageUrl = "";
+    const imageFile = Array.isArray(files?.image) ? files.image[0] : files?.image;
+    if (imageFile?.filepath) {
+      try {
+        const uploadResponse = await cloudinary.uploader.upload(imageFile.filepath, {
+          folder: `menus/${businessId}`,
+          resource_type: "image",
+        });
+        imageUrl = uploadResponse.secure_url;
+      } catch (cloudError) {
+        console.error("❌ Error subiendo imagen:", cloudError);
+        return res
+          .status(500)
+          .json({ error: "Error subiendo imagen", details: cloudError.message });
+      }
+    }
+
+    // Crear doc
+    const productRef = businessRef.collection("products").doc();
+    const productId = productRef.id;
+
+    const newProduct = {
+      id: productId,
       businessId,
       name,
-      price,
+      price: isNaN(price) ? 0 : price,
       description,
       category,
-      preparationTime,
+      preparationTime: isNaN(preparationTime) ? 0 : preparationTime,
       specialNotes,
-      ingredients,
+      date: Date.now(),
+      ingredients: Array.isArray(ingredients) ? ingredients : [],
       available,
       size,
       type,
-    } = fields;
+      imageUrl,
+    };
 
-    console.log("📩 Body recibido:", fields);
+    await productRef.set(newProduct);
 
-      // Validaciones básicas
-      if (!businessId) return res.status(400).json({ error: "businessId requerido" });
-      if (!name) return res.status(400).json({ error: "name requerido" });
-
-      // Verificar negocio
-      const businessRef = db.collection("businesses").doc(businessId);
-      const businessSnap = await businessRef.get();
-      if (!businessSnap.exists) {
-        return res.status(404).json({ error: "Negocio no encontrado" });
-      }
-
-      // Subir imagen a Cloudinary si existe
-      let imageUrl = "";
-      if (files.image) {
-        try {
-          const uploadResponse = await cloudinary.uploader.upload(files.image.filepath, {
-            folder: `menus/${businessId}`,
-            resource_type: "image",
-          });
-          imageUrl = uploadResponse.secure_url;
-        } catch (cloudError) {
-          console.error("❌ Error subiendo imagen:", cloudError);
-          return res.status(500).json({ error: "Error subiendo imagen", details: cloudError.message });
-        }
-      }
-
-      // Generar ID de producto
-      const productRef = businessRef.collection("products").doc();
-      const productId = productRef.id;
-
-      // Construir objeto producto
-      const newProduct = {
-        id: productId,
-        businessId,
-        name,
-        price: Number(price),
-        description: description || "",
-        category: category || "",
-        preparationTime: Number(preparationTime) || 0,
-        specialNotes: specialNotes || "",
-        date: Date.now(),
-        ingredients: Array.isArray(ingredients) ? ingredients : [],
-        available: available !== undefined ? available === "true" || available === true : true,
-        size: size || null,
-        type: type || null,
-        imageUrl,
-      };
-
-      // Guardar en Firestore
-      await productRef.set(newProduct);
-
-      return res.status(201).json({
-        success: true,
-        message: "Producto creado exitosamente",
-        product: newProduct,
-      });
-    } catch (error) {
-      console.error("❌ Error creando producto:", error);
-      return res.status(500).json({ error: error.message });
-    }
-  });
+    return res.status(201).json({
+      success: true,
+      message: "Producto creado exitosamente",
+      product: newProduct,
+    });
+  } catch (error) {
+    console.error("❌ Error general al crear producto:", error);
+    return res.status(500).json({ error: error.message || "Error interno" });
+  }
 }
