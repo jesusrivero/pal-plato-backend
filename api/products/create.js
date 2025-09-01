@@ -31,10 +31,13 @@ cloudinary.config({
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
+    console.warn("⚠️ Método no permitido:", req.method);
     return res.status(405).json({ error: "Método no permitido" });
   }
 
   try {
+    console.log("📩 Body recibido:", req.body);
+
     const {
       businessId,
       name,
@@ -47,29 +50,49 @@ export default async function handler(req, res) {
       available,
       size,
       type,
-      imageBase64, // 📌 Imagen enviada como Base64 desde la app
+      imageBase64,
     } = req.body;
 
     // --- Validaciones ---
-    if (!businessId) return res.status(400).json({ error: "businessId requerido" });
-    if (!name) return res.status(400).json({ error: "name requerido" });
-    if (typeof price !== "number") return res.status(400).json({ error: "price inválido" });
+    if (!businessId) {
+      console.error("❌ businessId requerido");
+      return res.status(400).json({ error: "businessId requerido" });
+    }
+    if (!name) {
+      console.error("❌ name requerido");
+      return res.status(400).json({ error: "name requerido" });
+    }
+    if (typeof price !== "number") {
+      console.error("❌ price inválido:", price);
+      return res.status(400).json({ error: "price inválido" });
+    }
 
-    // Verificar que el negocio existe
+    console.log("🔍 Verificando negocio:", businessId);
     const businessRef = db.collection("businesses").doc(businessId);
     const businessSnap = await businessRef.get();
+
     if (!businessSnap.exists) {
+      console.error("❌ Negocio no encontrado:", businessId);
       return res.status(404).json({ error: "Negocio no encontrado" });
     }
 
-    // Subir imagen a Cloudinary si existe
+    // Subir imagen a Cloudinary
     let imageUrl = "";
     if (imageBase64) {
-      const uploadResponse = await cloudinary.uploader.upload(imageBase64, {
-        folder: `menus/${businessId}`,
-        resource_type: "image",
-      });
-      imageUrl = uploadResponse.secure_url;
+      console.log("📤 Subiendo imagen a Cloudinary...");
+      try {
+        const uploadResponse = await cloudinary.uploader.upload(imageBase64, {
+          folder: `menus/${businessId}`,
+          resource_type: "image",
+        });
+        imageUrl = uploadResponse.secure_url;
+        console.log("✅ Imagen subida:", imageUrl);
+      } catch (cloudError) {
+        console.error("❌ Error subiendo imagen a Cloudinary:", cloudError);
+        return res.status(500).json({ error: "Error subiendo imagen", details: cloudError.message });
+      }
+    } else {
+      console.log("ℹ️ No se recibió imagen para este producto");
     }
 
     // Generar ID del producto
@@ -90,11 +113,15 @@ export default async function handler(req, res) {
       available: available ?? true,
       size: size || null,
       type: type || null,
-      imageUrl, // ✅ URL de Cloudinary
+      imageUrl,
     };
+
+    console.log("📝 Guardando producto en Firestore:", newProduct);
 
     // Guardar en Firestore
     await productRef.set(newProduct);
+
+    console.log("✅ Producto creado exitosamente:", productId);
 
     res.status(201).json({
       success: true,
@@ -102,7 +129,7 @@ export default async function handler(req, res) {
       product: newProduct,
     });
   } catch (error) {
-    console.error("❌ Error al crear producto:", error);
+    console.error("❌ Error general al crear producto:", error);
     res.status(500).json({ error: "Error interno al crear producto", details: error.message });
   }
 }
