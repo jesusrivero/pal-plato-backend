@@ -2,7 +2,14 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import admin from "firebase-admin";
+import formidable from "formidable";
 import { v2 as cloudinary } from "cloudinary";
+
+export const config = {
+  api: {
+    bodyParser: false, // 👈 necesario para que formidable maneje form-data
+  },
+};
 
 // --- Inicializar Firebase Admin ---
 if (!admin.apps.length) {
@@ -31,105 +38,88 @@ cloudinary.config({
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    console.warn("⚠️ Método no permitido:", req.method);
     return res.status(405).json({ error: "Método no permitido" });
   }
 
-  try {
-    console.log("📩 Body recibido:", req.body);
+  const form = formidable({ multiples: false });
 
-    const {
-      businessId,
-      name,
-      price,
-      description,
-      category,
-      preparationTime,
-      specialNotes,
-      ingredients,
-      available,
-      size,
-      type,
-      imageBase64,
-    } = req.body;
-
-    // --- Validaciones ---
-    if (!businessId) {
-      console.error("❌ businessId requerido");
-      return res.status(400).json({ error: "businessId requerido" });
-    }
-    if (!name) {
-      console.error("❌ name requerido");
-      return res.status(400).json({ error: "name requerido" });
-    }
-    if (typeof price !== "number") {
-      console.error("❌ price inválido:", price);
-      return res.status(400).json({ error: "price inválido" });
+  form.parse(req, async (err, fields, files) => {
+    if (err) {
+      console.error("❌ Error parseando form-data:", err);
+      return res.status(500).json({ error: "Error parseando form-data" });
     }
 
-    console.log("🔍 Verificando negocio:", businessId);
-    const businessRef = db.collection("businesses").doc(businessId);
-    const businessSnap = await businessRef.get();
+    try {
+      const {
+        businessId,
+        name,
+        price,
+        description,
+        category,
+        preparationTime,
+        specialNotes,
+        ingredients,
+        available,
+        size,
+        type,
+      } = fields;
 
-    if (!businessSnap.exists) {
-      console.error("❌ Negocio no encontrado:", businessId);
-      return res.status(404).json({ error: "Negocio no encontrado" });
-    }
+      if (!businessId) return res.status(400).json({ error: "businessId requerido" });
+      if (!name) return res.status(400).json({ error: "name requerido" });
 
-    // Subir imagen a Cloudinary
-    let imageUrl = "";
-    if (imageBase64) {
-      console.log("📤 Subiendo imagen a Cloudinary...");
-      try {
-        const uploadResponse = await cloudinary.uploader.upload(imageBase64, {
-          folder: `menus/${businessId}`,
-          resource_type: "image",
-        });
-        imageUrl = uploadResponse.secure_url;
-        console.log("✅ Imagen subida:", imageUrl);
-      } catch (cloudError) {
-        console.error("❌ Error subiendo imagen a Cloudinary:", cloudError);
-        return res.status(500).json({ error: "Error subiendo imagen", details: cloudError.message });
+      // Verificar negocio
+      const businessRef = db.collection("businesses").doc(businessId);
+      const businessSnap = await businessRef.get();
+      if (!businessSnap.exists) {
+        return res.status(404).json({ error: "Negocio no encontrado" });
       }
-    } else {
-      console.log("ℹ️ No se recibió imagen para este producto");
+
+      // Subir imagen a Cloudinary
+      let imageUrl = "";
+      if (files.image) {
+        try {
+          const uploadResponse = await cloudinary.uploader.upload(files.image.filepath, {
+            folder: `menus/${businessId}`,
+            resource_type: "image",
+          });
+          imageUrl = uploadResponse.secure_url;
+        } catch (cloudError) {
+          console.error("❌ Error subiendo imagen:", cloudError);
+          return res.status(500).json({ error: "Error subiendo imagen", details: cloudError.message });
+        }
+      }
+
+      // Generar ID de producto
+      const productRef = businessRef.collection("products").doc();
+      const productId = productRef.id;
+
+      const newProduct = {
+        id: productId,
+        businessId,
+        name,
+        price: Number(price),
+        description: description || "",
+        category: category || "",
+        preparationTime: Number(preparationTime) || 0,
+        specialNotes: specialNotes || "",
+        date: Date.now(),
+        ingredients: ingredients || [],
+        available: available ?? true,
+        size: size || null,
+        type: type || null,
+        imageUrl,
+      };
+
+      await productRef.set(newProduct);
+
+      return res.status(201).json({
+        success: true,
+        message: "Producto creado exitosamente",
+        product: newProduct,
+      });
+    } catch (error) {
+      console.error("❌ Error creando producto:", error);
+      return res.status(500).json({ error: error.message });
     }
-
-    // Generar ID del producto
-    const productRef = businessRef.collection("products").doc();
-    const productId = productRef.id;
-
-    const newProduct = {
-      id: productId,
-      businessId,
-      name,
-      price,
-      description: description || "",
-      category: category || "",
-      preparationTime: preparationTime || 0,
-      specialNotes: specialNotes || "",
-      date: Date.now(),
-      ingredients: ingredients || [],
-      available: available ?? true,
-      size: size || null,
-      type: type || null,
-      imageUrl,
-    };
-
-    console.log("📝 Guardando producto en Firestore:", newProduct);
-
-    // Guardar en Firestore
-    await productRef.set(newProduct);
-
-    console.log("✅ Producto creado exitosamente:", productId);
-
-    res.status(201).json({
-      success: true,
-      message: "Producto creado exitosamente",
-      product: newProduct,
-    });
-  } catch (error) {
-    console.error("❌ Error general al crear producto:", error);
-    res.status(500).json({ error: "Error interno al crear producto", details: error.message });
-  }
+  });
 }
