@@ -44,25 +44,25 @@ export default async function handler(req, res) {
   const form = formidable({ multiples: false });
 
   form.parse(req, async (err, fields, files) => {
-    if (err) {
-      console.error("❌ Error parseando form-data:", err);
-      return res.status(500).json({ error: "Error parseando form-data" });
-    }
+  if (err) return res.status(500).json({ error: "Error parseando form-data" });
 
-    try {
-      const {
-        businessId,
-        name,
-        price,
-        description,
-        category,
-        preparationTime,
-        specialNotes,
-        ingredients,
-        available,
-        size,
-        type,
-      } = fields;
+  try {
+    // ✅ usar fields en lugar de req.body
+    const {
+      businessId,
+      name,
+      price,
+      description,
+      category,
+      preparationTime,
+      specialNotes,
+      ingredients,
+      available,
+      size,
+      type,
+    } = fields;
+
+    console.log("📩 Body recibido:", fields);
 
       // Validaciones básicas
       if (!businessId) return res.status(400).json({ error: "businessId requerido" });
