@@ -3,8 +3,7 @@ dotenv.config({ path: ".env.local" });
 
 import admin from "firebase-admin";
 
-// Marca de versión
-console.log("🚦 /api/products/create v4 (sin imagen en backend)");
+console.log("🚦 /api/products/create v5 (solo JSON, sin imagen)");
 
 if (!admin.apps.length) {
   try {
@@ -28,6 +27,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log("📩 Body recibido:", req.body);
+
     const {
       businessId,
       name,
@@ -71,7 +72,7 @@ export default async function handler(req, res) {
       available: Boolean(available),
       size,
       type,
-      imageUrl, // 👈 ahora viene directo de Cloudinary
+      imageUrl,
     };
 
     await productRef.set(newProduct);
