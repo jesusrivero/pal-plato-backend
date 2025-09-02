@@ -8,16 +8,16 @@
   },
   "dependencies": {
     "cloudinary": "^2.7.0",
-    "cors": "2.8.5",
-    "dotenv": "17.2.1",
-    "express": "4.19.2",
-    "firebase-admin": "12.5.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^4.21.2",
+    "firebase-admin": "^12.7.0",
     "formidable": "^3.5.4",
-    "geofire-common": "5.2.0",
+    "geofire-common": "^5.2.0",
     "serverless-http": "3.2.0"
   },
   "devDependencies": {
-    "nodemon": "3.1.10"
+    "nodemon": "^3.1.10"
   },
   "scripts": {
     "dev": "nodemon index.js"
