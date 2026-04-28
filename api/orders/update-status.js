@@ -1,8 +1,16 @@
-// Ejemplo de estructura en Node.js para tu API
+import { db } from "../../firebase.js"; // Usa la misma importación que tus otros archivos
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end();
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: "Método no permitido" });
+  }
 
   const { orderId, newStatus, businessId } = req.body;
+
+  // 1. Validación de campos básicos
+  if (!orderId || !newStatus || !businessId) {
+    return res.status(400).json({ error: "orderId, newStatus y businessId son requeridos" });
+  }
 
   try {
     const orderRef = db.collection('orders').doc(orderId);
@@ -13,9 +21,15 @@ export default async function handler(req, res) {
     }
 
     const orderData = orderDoc.data();
+
+    // 2. SEGURIDAD: Validar que el negocio que intenta actualizar es el dueño del pedido
+    if (orderData.businessId !== businessId) {
+      return res.status(403).json({ error: 'No tienes permiso para modificar este pedido' });
+    }
+
     const currentStatus = orderData.status;
 
-    // ✅ CENTRALIZACIÓN: Las mismas reglas que tienes en tu app
+    // 3. CENTRALIZACIÓN DE LÓGICA
     const allowed = getAllowedTransitions(currentStatus, orderData.deliveryType);
     
     if (!allowed.includes(newStatus)) {
@@ -24,27 +38,36 @@ export default async function handler(req, res) {
       });
     }
 
-    // Actualizar en Firestore
-    await orderRef.update({ 
+    // 4. Actualización
+    const updateData = { 
       status: newStatus,
       updatedAt: Date.now() 
-    });
+    };
 
-    return res.status(200).json({ success: true, status: newStatus });
+    // Si el pedido se marca como listo, podemos registrar quién o cuándo se hizo
+    await orderRef.update(updateData);
+
+    console.log(`✅ Pedido ${orderId} actualizado a ${newStatus}`);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: "Estado actualizado correctamente",
+      status: newStatus 
+    });
     
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("❌ Error al actualizar estado:", error);
+    return res.status(500).json({ error: "Error interno", details: error.message });
   }
 }
 
-// Fuente de verdad única en el servidor
-function getAllowedTransitions(current, deliveryType) {
+function getAllowedTransitions(current, deliveryType = "pickup") {
   const transitions = {
     'pending': ['accepted', 'rejected'],
     'accepted': ['preparing', 'cancelled'],
-    'preparing': ['ready'],
-    'ready': deliveryType === 'delivery' ? ['on_the_way'] : ['delivered'],
-    'on_the_way': ['delivered']
+    'preparing': ['ready', 'cancelled'],
+    'ready': deliveryType === 'delivery' ? ['on_the_way', 'cancelled'] : ['delivered', 'cancelled'],
+    'on_the_way': ['delivered', 'cancelled']
   };
   return transitions[current] || [];
 }
