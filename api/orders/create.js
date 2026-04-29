@@ -1,6 +1,5 @@
 import { db } from "../../firebase.js";
 
-
 // Importamos o pegamos la función aquí para que esté disponible
 function checkIfOpen(schedule, isManualClosed = false) {
     if (isManualClosed === true) return false;
