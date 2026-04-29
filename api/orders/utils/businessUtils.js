@@ -39,6 +39,3 @@ export function checkIfOpen(schedule, isManualClosed = false) {
 
     return currentMinutes >= openMin && currentMinutes < closeMin;
 }
-
-// Aquí podrías agregar más funciones a futuro, por ejemplo:
-// export function calculateDeliveryTime(distance) { ... }

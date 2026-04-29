@@ -1,7 +1,42 @@
-// /api/orders/create.js
 import { db } from "../../firebase.js";
-// ✅ Importamos la función centralizada
-import { checkIfOpen } from "../../utils/businessUtils.js";
+
+
+// Importamos o pegamos la función aquí para que esté disponible
+function checkIfOpen(schedule, isManualClosed = false) {
+    if (isManualClosed === true) return false;
+    if (!Array.isArray(schedule) || schedule.length === 0) return false;
+
+    const now = new Date();
+    const venezuelaOffset = -4 * 3600000;
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const venezuelaDate = new Date(utc + venezuelaOffset);
+
+    const dayIndex = venezuelaDate.getDay();
+    const currentMinutes = venezuelaDate.getHours() * 60 + venezuelaDate.getMinutes();
+
+    const dayNames = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    const dayNamesNoTilde = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+    const todayName = dayNames[dayIndex];
+    const todayNameNoTilde = dayNamesNoTilde[dayIndex];
+
+    const todaySchedule = schedule.find(s => {
+        const dbDay = s.day?.trim().toLowerCase();
+        return dbDay === todayName || dbDay === todayNameNoTilde;
+    });
+
+    if (!todaySchedule || !todaySchedule.isOpen) return false;
+
+    const [openH, openM] = (todaySchedule.openTime || "00:00").split(":").map(Number);
+    const [closeH, closeM] = (todaySchedule.closeTime || "00:00").split(":").map(Number);
+
+    const openMin = openH * 60 + openM;
+    const closeMin = closeH * 60 + closeM;
+
+    if (closeMin < openMin) {
+        return currentMinutes >= openMin || currentMinutes < closeMin;
+    }
+    return currentMinutes >= openMin && currentMinutes < closeMin;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -9,18 +44,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { 
-      businessId, 
-      customerId, 
-      customerName, 
-      customerPhone, 
-      items, 
-      deliveryFee, 
-      location, 
-      instructions, 
-      deliveryType, 
-      reference 
-    } = req.body;
+    const { businessId, customerId, customerName, customerPhone, items, deliveryFee, location, instructions, deliveryType, reference } = req.body;
 
     // 1. Validaciones básicas de entrada
     if (!businessId || !customerId) return res.status(400).json({ error: "Datos incompletos" });
@@ -36,18 +60,17 @@ export default async function handler(req, res) {
     
     const businessData = businessSnap.data();
 
-    // 🔴 VALIDACIÓN CRÍTICA: ¿Está abierto ahora? 
-    // Usamos la función importada de businessUtils
+    // 🔴 VALIDACIÓN CRÍTICA: ¿Está abierto ahora?
     const isOpenNow = checkIfOpen(businessData.schedule, businessData.manualClosed);
     
     if (!isOpenNow) {
       return res.status(400).json({
         success: false,
-        message: "El negocio se encuentra cerrado en este momento o ya no recibe pedidos."
+        message: "El negocio se encuentra cerrado en este momento. No puede procesar el pedido."
       });
     }
 
-    // 3. VALIDACIÓN: Evitar pedidos pendientes
+    // 3. VALIDACIÓN: Evitar pedidos pendientes (Tu lógica existente)
     const pendingOrdersQuery = await db.collection("orders")
       .where("customerId", "==", customerId)
       .where("status", "==", "pending")
@@ -60,7 +83,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 4. Validar productos y calcular total
+    // 4. Validar productos y calcular total (Tu lógica existente)
     let subtotal = 0;
     const validatedItems = [];
 
