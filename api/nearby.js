@@ -40,6 +40,63 @@ function calculatePreciseDistance(lat1, lng1, lat2, lng2) {
   return R * c;
 }
 
+/**
+ * Determina si un negocio está abierto basándose en su horario y un interruptor manual.
+ * * @param {Array} schedule - Array de objetos: [{ day: "Lunes", openTime: "08:00", closeTime: "22:00", isOpen: true }]
+ * @param {Boolean} isManualClosed - Campo opcional de Firestore (manualClosed) para cierres de emergencia.
+ * @returns {Boolean} - True si el negocio debe aparecer abierto al público.
+ */
+function checkIfOpen(schedule, isManualClosed = false) {
+    // 1. Prioridad absoluta: Si el dueño activó el "Cierre Manual", el negocio está cerrado.
+    if (isManualClosed === true) return false;
+
+    // Validación básica del horario
+    if (!Array.isArray(schedule) || schedule.length === 0) return false;
+
+    // 2. Obtener fecha y hora actual en Venezuela (UTC-4)
+    // Se calcula usando el offset para que no dependa de la ubicación del servidor (Vercel)
+    const now = new Date();
+    const venezuelaOffset = -4 * 3600000;
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const venezuelaDate = new Date(utc + venezuelaOffset);
+
+    const dayIndex = venezuelaDate.getDay(); // 0 (Domingo) a 6 (Sábado)
+    const currentMinutes = venezuelaDate.getHours() * 60 + venezuelaDate.getMinutes();
+
+    // 3. Normalización de nombres de días (Evita errores por tildes o mayúsculas)
+    const dayNames = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    const dayNamesNoTilde = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+    const todayName = dayNames[dayIndex];
+    const todayNameNoTilde = dayNamesNoTilde[dayIndex];
+
+    // 4. Buscar el horario correspondiente al día de hoy
+    const todaySchedule = schedule.find(s => {
+        const dbDay = s.day?.trim().toLowerCase();
+        return dbDay === todayName || dbDay === todayNameNoTilde;
+    });
+
+    // Si el día no está configurado o el dueño marcó que no abre ese día (isOpen: false en el schedule)
+    if (!todaySchedule || !todaySchedule.isOpen) return false;
+
+    // 5. Parsear horas de apertura y cierre (Formato esperado "HH:mm")
+    const [openH, openM] = (todaySchedule.openTime || "00:00").split(":").map(Number);
+    const [closeH, closeM] = (todaySchedule.closeTime || "00:00").split(":").map(Number);
+
+    const openMin = openH * 60 + openM;
+    const closeMin = closeH * 60 + closeM;
+
+    // 6. Lógica de comparación de tiempo
+    // Caso especial: Horarios que cruzan la medianoche (ej. abre 18:00 y cierra 02:00)
+    if (closeMin < openMin) {
+        return currentMinutes >= openMin || currentMinutes < closeMin;
+    }
+
+    // Caso estándar: Abre y cierra el mismo día
+    return currentMinutes >= openMin && currentMinutes < closeMin;
+}
+
+
+
 // --- Handler principal para Vercel ---
 export default async function handler(req, res) {
   if (req.method === "POST") {
@@ -57,12 +114,12 @@ export default async function handler(req, res) {
       const center = [lat, lng];
       const bounds = geohashQueryBounds(center, radiusKm * 1000);
 
+      // ✅ CAMBIO IMPORTANTE: Quitamos el where("isOpen") de la consulta base.
+      // Ahora recuperamos los negocios activos y validamos el horario nosotros.
       let baseQuery = db.collection("businesses").where("state", "==", true);
+      
       if (typeof hasDelivery === "boolean") {
         baseQuery = baseQuery.where("hasDelivery", "==", hasDelivery);
-      }
-      if (typeof isOpen === "boolean") {
-        baseQuery = baseQuery.where("isOpen", "==", isOpen);
       }
 
       const snaps = await Promise.all(
@@ -83,6 +140,13 @@ export default async function handler(req, res) {
           const dist = calculatePreciseDistance(lat, lng, data.latitude, data.longitude);
 
           if (dist <= radiusKm * 1000) {
+            
+            // ✅ CÁLCULO EN TIEMPO REAL: Soporta horario y cierre manual
+            const isOpenNow = checkIfOpen(data.schedule, data.manualClosed);
+
+            // ✅ FILTRO POST-CÁLCULO: Si el cliente filtró por "solo abiertos"
+            if (isOpen === true && !isOpenNow) return;
+
             if (category) {
               const cats = Array.isArray(data.categories) ? data.categories : [];
               const match = cats.some(
@@ -92,35 +156,38 @@ export default async function handler(req, res) {
             }
 
             businesses.push({
-  id: doc.id,
-  businessId: doc.id, // 👈 lo mismo que id (por compatibilidad con tu data class)
-  ownerId: data.ownerId || "",
-  name: data.name || "",
-  description: data.description || "",
-  direction: data.direction || "",
-  phone: data.phone || "",
-  state: data.state ?? true,
-  date: data.date || null,
-  logoUrl: data.logoUrl || null,
-  isOpen: !!data.isOpen,
-  hasDelivery: !!data.hasDelivery,
-  deliveryPrice: parseFloat(data.deliveryPrice) || 0,
-  latitude: data.latitude,
-  longitude: data.longitude,
-  geohash: data.geohash || null,
-  categories: Array.isArray(data.categories) ? data.categories : [],
-  schedule: Array.isArray(data.schedule) ? data.schedule : [],
-  addressNotes: data.addressNotes || null,
+              id: doc.id,
+              businessId: doc.id,
+              ownerId: data.ownerId || "",
+              name: data.name || "",
+              description: data.description || "",
+              direction: data.direction || "",
+              phone: data.phone || "",
+              state: data.state ?? true,
+              date: data.date || null,
+              logoUrl: data.logoUrl || null,
+              
+              // ✅ Valor calculado dinámicamente
+              isOpen: isOpenNow,
+              manualClosed: !!data.manualClosed,
+              
+              hasDelivery: !!data.hasDelivery,
+              deliveryPrice: parseFloat(data.deliveryPrice) || 0,
+              latitude: data.latitude,
+              longitude: data.longitude,
+              geohash: data.geohash || null,
+              categories: Array.isArray(data.categories) ? data.categories : [],
+              schedule: Array.isArray(data.schedule) ? data.schedule : [],
+              addressNotes: data.addressNotes || null,
 
-  // 💳 Datos de pago móvil
-  bank: data.bank || "",
-  phonePayment: data.phonePayment || "",
-  idCardPayment: data.idCardPayment || "",
+              // 💳 Datos de pago móvil
+              bank: data.bank || "",
+              phonePayment: data.phonePayment || "",
+              idCardPayment: data.idCardPayment || "",
 
-  // ⚡ Distancia
-  distanceMeters: Math.round(dist),
-});
-
+              // ⚡ Distancia
+              distanceMeters: Math.round(dist),
+            });
           }
         });
       });
